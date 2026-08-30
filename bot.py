@@ -13,6 +13,19 @@ TOKEN = os.getenv("BOT_TOKEN")
 DOWNLOAD_DIR = Path("/tmp/downloads")
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 COOKIE_FILE = Path("/etc/secrets/cookies.txt")
+RUNTIME_COOKIE_FILE = Path("/tmp/cookies.txt")
+YT_DLP_CACHE_DIR = Path("/tmp/yt-dlp-cache")
+
+
+def prepare_cookie_file() -> str | None:
+    """Copy Render Secret File to writable /tmp because yt-dlp may update the cookie jar."""
+    if not COOKIE_FILE.is_file():
+        return None
+    try:
+        shutil.copyfile(COOKIE_FILE, RUNTIME_COOKIE_FILE)
+        return str(RUNTIME_COOKIE_FILE)
+    except OSError as exc:
+        raise RuntimeError(f"Could not prepare YouTube cookies: {exc}") from exc
 
 
 def clean_name(name: str) -> str:
@@ -21,6 +34,7 @@ def clean_name(name: str) -> str:
 
 def download_youtube(url: str, workdir: Path) -> tuple[Path, str]:
     template = str(workdir / "%(id)s.%(ext)s")
+    runtime_cookie = prepare_cookie_file()
     opts = {
         "format": "bestvideo+bestaudio/best",
         "outtmpl": template,
@@ -28,9 +42,11 @@ def download_youtube(url: str, workdir: Path) -> tuple[Path, str]:
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
-        "cookiefile": str(COOKIE_FILE) if COOKIE_FILE.is_file() else None,
+        "cookiefile": runtime_cookie,
+        "cachedir": str(YT_DLP_CACHE_DIR),
         "js_runtimes": {"deno": {}},
         "remote_components": ["ejs:github"],
+        "noprogress": True,
         "restrictfilenames": True,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
