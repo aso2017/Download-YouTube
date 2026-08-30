@@ -3,6 +3,7 @@ services:
     name: youtube-telegram-bot
     runtime: docker
     plan: free
+    healthCheckPath: /health
     envVars:
       - key: BOT_TOKEN
         sync: false

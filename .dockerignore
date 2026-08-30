@@ -1,8 +1,5 @@
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-env/
+.git
+.gitignore
 .env
 cookies.txt
 cookies*.txt
@@ -10,3 +7,8 @@ downloads/
 *.mp4
 *.webm
 *.m4a
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
