@@ -1,26 +1,9 @@
-FROM python:3.12-slim
-
-ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    DENO_INSTALL=/usr/local \
-    HOME=/tmp \
-    XDG_CACHE_HOME=/tmp/.cache \
-    DENO_DIR=/tmp/deno
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl unzip ffmpeg \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl -fsSL https://deno.land/install.sh | sh \
-    && deno --version
-
+FROM python:3.13-slim
 WORKDIR /app
+RUN apt update && apt install -y ffmpeg curl unzip && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://deno.land/install.sh | sh
+ENV PATH="/root/.deno/bin:$PATH"
 COPY requirements.txt .
 RUN pip install -r requirements.txt
-
-COPY bot.py .
-COPY render.yaml .
-
-RUN mkdir -p /tmp/downloads /tmp/.cache /tmp/deno /tmp/yt-dlp-cache \
-    && chmod 1777 /tmp/downloads /tmp/.cache /tmp/deno /tmp/yt-dlp-cache
-
-CMD ["python", "bot.py"]
+COPY . .
+CMD ["python","bot.py"]

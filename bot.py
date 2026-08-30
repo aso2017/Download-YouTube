@@ -1,371 +1,75 @@
-import asyncio
+
 import os
+import asyncio
 import shutil
 import uuid
+import subprocess
 from pathlib import Path
-
 from aiohttp import web
-import yt_dlp
 from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 TOKEN = os.getenv("BOT_TOKEN")
 
-# Writable directories on Render
 DOWNLOAD_DIR = Path("/tmp/downloads")
-RUNTIME_COOKIE_FILE = Path("/tmp/cookies.txt")
-YT_DLP_CACHE_DIR = Path("/tmp/yt-dlp-cache")
-DENO_DIR = Path("/tmp/deno")
-
-# Render Secret File (read-only)
-COOKIE_FILE = Path("/etc/secrets/cookies.txt")
-
-# Create writable directories
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-YT_DLP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-DENO_DIR.mkdir(parents=True, exist_ok=True)
 
-# Force all caches/temp paths to writable locations
-os.environ["HOME"] = "/tmp"
-os.environ["XDG_CACHE_HOME"] = "/tmp/cache"
-os.environ["DENO_DIR"] = str(DENO_DIR)
+COOKIE_FILE = Path("/app/cookies.txt")
+PORT = int(os.getenv("PORT", "10000"))
 
-
-def prepare_cookie_file() -> str | None:
-    """
-    Copy Render's read-only Secret File to a writable /tmp file.
-    yt-dlp uses the copied file so it can safely update the cookie jar.
-    """
-    if not COOKIE_FILE.is_file():
-        print("YouTube cookies: NOT FOUND")
-        return None
-
-    try:
-        RUNTIME_COOKIE_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-        shutil.copyfile(COOKIE_FILE, RUNTIME_COOKIE_FILE)
-
-        size = RUNTIME_COOKIE_FILE.stat().st_size
-        print(f"YouTube cookies: COPIED ({size} bytes)")
-
-        return str(RUNTIME_COOKIE_FILE)
-
-    except OSError as exc:
-        raise RuntimeError(
-            f"Could not prepare YouTube cookies: {exc}"
-        ) from exc
-
-
-def clean_name(name: str) -> str:
-    return (
-        "".join(c for c in name if c not in '<>:"/\\|?*')
-        .strip()[:150]
-        or "video"
-    )
-
-
-def download_youtube(url: str, workdir: Path) -> tuple[Path, str]:
-    workdir.mkdir(parents=True, exist_ok=True)
-
-    template = str(workdir / "%(id)s.%(ext)s")
-
-    runtime_cookie = prepare_cookie_file()
-
-    opts = {
-        "format": "bestvideo+bestaudio/best",
-        "outtmpl": template,
-        "noplaylist": True,
-        "merge_output_format": "mp4",
-
-        # Cookie
-        "cookiefile": runtime_cookie,
-
-        # Writable yt-dlp cache
-        "cachedir": str(YT_DLP_CACHE_DIR),
-
-        # JavaScript challenge solving
-        "js_runtimes": {
-            "deno": {}
-        },
-        "remote_components": [
-            "ejs:github"
-        ],
-
-        # Output / behavior
-        "quiet": False,
-        "no_warnings": False,
-        "noprogress": True,
-        "restrictfilenames": True,
-    }
-
-    # Don't pass a None cookiefile to yt-dlp
-    if runtime_cookie is None:
-        opts.pop("cookiefile", None)
-
-    print(f"Starting YouTube download: {url}")
-    print(f"Cookie enabled: {runtime_cookie is not None}")
-    print(f"Download directory: {workdir}")
-    print(f"yt-dlp cache: {YT_DLP_CACHE_DIR}")
-    print(f"Deno directory: {DENO_DIR}")
-
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-
-        title = clean_name(
-            info.get("title", "YouTube Video")
-        )
-
-        prepared = Path(
-            ydl.prepare_filename(info)
-        )
-
-        # Usually merged file becomes MP4
-        candidates = [
-            prepared.with_suffix(".mp4"),
-            prepared,
-        ]
-
-        files = [
-            p for p in candidates
-            if p.exists() and p.is_file()
-        ]
-
-        if files:
-            return files[0], title
-
-        # Fallback: find the largest downloaded file
-        all_files = [
-            p for p in workdir.iterdir()
-            if p.is_file()
-        ]
-
-        if not all_files:
-            raise FileNotFoundError(
-                "Downloaded file was not found"
-            )
-
-        all_files.sort(
-            key=lambda p: p.stat().st_size,
-            reverse=True
-        )
-
-        return all_files[0], title
-
+def download(url, folder):
+    out = str(folder / "%(id)s.%(ext)s")
+    cmd = [
+        "yt-dlp",
+        "--cookies", str(COOKIE_FILE),
+        "--js-runtimes", "deno",
+        "--remote-components", "ejs:github",
+        "--no-playlist",
+        "-o", out,
+        url
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode:
+        raise RuntimeError(r.stderr)
+    files = list(folder.glob("*"))
+    return max(files, key=lambda x:x.stat().st_size)
 
 async def health(request):
-    return web.json_response(
-        {
-            "status": "ok",
-            "service": "youtube-telegram-bot",
-        }
-    )
+    return web.json_response({"ok": True})
 
-
-async def start_web_server():
+async def server():
     app = web.Application()
-
     app.router.add_get("/", health)
-    app.router.add_get("/health", health)
-
     runner = web.AppRunner(app)
     await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", PORT).start()
 
-    port = int(
-        os.getenv("PORT", "10000")
-    )
+async def start(update: Update, context):
+    await update.message.reply_text("لینک یوتیوب را بفرست")
 
-    site = web.TCPSite(
-        runner,
-        "0.0.0.0",
-        port,
-    )
-
-    await site.start()
-
-    print(
-        f"Health server listening on port {port}"
-    )
-
-
-async def start_cmd(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-    if not update.message:
-        return
-
-    await update.message.reply_text(
-        "سلام 👋\n\n"
-        "لینک YouTube رو بفرست تا ویدئو رو دانلود کنم 🎬\n\n"
-        "فقط لینک ویدئوی تکی بفرست؛ "
-        "پلی‌لیست پشتیبانی نمی‌شود."
-    )
-
-
-async def handle_url(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-    if not update.message:
-        return
-
-    if not update.message.text:
-        return
-
-    url = update.message.text.strip()
-
-    if (
-        "youtube.com/" not in url
-        and "youtu.be/" not in url
-    ):
-        await update.message.reply_text(
-            "❌ لطفاً یک لینک معتبر YouTube بفرست."
-        )
-        return
-
-    status = await update.message.reply_text(
-        "⏳ در حال دریافت اطلاعات و دانلود..."
-    )
-
-    workdir = (
-        DOWNLOAD_DIR /
-        uuid.uuid4().hex
-    )
-
-    workdir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
+async def handle(update: Update, context):
+    url = update.message.text
+    msg = await update.message.reply_text("در حال دانلود...")
+    folder = DOWNLOAD_DIR / uuid.uuid4().hex
+    folder.mkdir()
     try:
         loop = asyncio.get_running_loop()
-
-        file_path, title = await loop.run_in_executor(
-            None,
-            download_youtube,
-            url,
-            workdir,
-        )
-
-        await status.edit_text(
-            "📤 دانلود انجام شد؛ "
-            "در حال ارسال فایل..."
-        )
-
-        caption = f"🎬 {title}"
-
-        with file_path.open("rb") as f:
-            await update.message.reply_document(
-                document=f,
-                filename=file_path.name,
-                caption=caption[:1024],
-            )
-
-        await status.delete()
-
-    except Exception as exc:
-        print(
-            "DOWNLOAD ERROR:",
-            repr(exc),
-        )
-
-        error_text = (
-            str(exc).strip()
-            or "خطای نامشخص"
-        )
-
-        await status.edit_text(
-            "❌ دانلود انجام نشد.\n\n"
-            f"{error_text[:1800]}"
-        )
-
+        f = await loop.run_in_executor(None, download, url, folder)
+        with f.open("rb") as x:
+            await update.message.reply_document(x, filename=f.name)
+    except Exception as e:
+        await msg.edit_text(str(e)[:1000])
     finally:
-        # Delete downloaded files
-        shutil.rmtree(
-            workdir,
-            ignore_errors=True,
-        )
-
-        # Delete temporary cookie copy
-        try:
-            if RUNTIME_COOKIE_FILE.exists():
-                RUNTIME_COOKIE_FILE.unlink()
-        except OSError:
-            pass
-
+        shutil.rmtree(folder, ignore_errors=True)
 
 async def main():
     if not TOKEN:
-        raise RuntimeError(
-            "BOT_TOKEN environment variable is missing"
-        )
-
-    print(
-        "YouTube Secret File:",
-        "FOUND" if COOKIE_FILE.is_file()
-        else "NOT FOUND",
-    )
-
-    print(
-        f"Download directory: {DOWNLOAD_DIR}"
-    )
-
-    print(
-        f"yt-dlp cache directory: "
-        f"{YT_DLP_CACHE_DIR}"
-    )
-
-    print(
-        f"Deno directory: {DENO_DIR}"
-    )
-
-    await start_web_server()
-
-    app = (
-        Application.builder()
-        .token(TOKEN)
-        .build()
-    )
-
-    app.add_handler(
-        CommandHandler(
-            "start",
-            start_cmd,
-        )
-    )
-
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            handle_url,
-        )
-    )
-
-    await app.initialize()
-    await app.start()
-
-    await app.updater.start_polling(
-        drop_pending_updates=True
-    )
-
-    print(
-        "Telegram bot is running"
-    )
-
-    try:
-        await asyncio.Event().wait()
-
-    finally:
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
-
+        raise RuntimeError("BOT_TOKEN missing")
+    await server()
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+    await app.run_polling()
 
 if __name__ == "__main__":
     asyncio.run(main())
