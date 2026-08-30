@@ -1,23 +1,38 @@
-# YouTube Telegram Downloader
+# YouTube Telegram Downloader — Render
 
-Telegram bot that downloads single YouTube videos with yt-dlp and sends the resulting file back to the user.
+Telegram bot using `yt-dlp`, ready for Render Docker Web Service.
 
-## Render
+## Render setup
 
-1. Push these files to a GitHub repository.
-2. Create a Render **Web Service** using the repository.
-3. Runtime: **Docker**.
-4. Add environment variable:
-   - `BOT_TOKEN` = your Telegram bot token
-5. Deploy.
+1. Create a **Web Service** from this repository.
+2. Runtime: **Docker**. Do not enter Build Command or Start Command; the Dockerfile handles them.
+3. Add environment variable:
+   - `BOT_TOKEN` = your Telegram bot token.
+4. Add a Render **Secret File**:
+   - Filename/path: `cookies.txt`
+   - Contents: your valid Mozilla/Netscape-format YouTube cookies.
+5. The app reads the secret from `/etc/secrets/cookies.txt` automatically.
+6. Deploy.
 
-The app exposes `/` and `/health` on Render's `$PORT` and runs Telegram polling in the same service.
+The app exposes `/` and `/health` on Render's `$PORT` and starts Telegram polling.
 
-## Local
+## Cookie format
+
+The cookie file must be Mozilla/Netscape format and should begin with either:
+
+`# HTTP Cookie File`
+
+or
+
+`# Netscape HTTP Cookie File`
+
+Keep cookies private. Never commit `cookies.txt` to GitHub.
+
+## Local test
 
 ```bash
 pip install -r requirements.txt
 python bot.py
 ```
 
-FFmpeg is required for bestvideo+bestaudio merging. The included Dockerfile installs it automatically.
+Set `BOT_TOKEN` before running locally.

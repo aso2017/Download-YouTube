@@ -12,6 +12,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 TOKEN = os.getenv("BOT_TOKEN")
 DOWNLOAD_DIR = Path("downloads")
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+COOKIE_FILE = Path("/etc/secrets/cookies.txt")
 
 
 def clean_name(name: str) -> str:
@@ -27,6 +28,7 @@ def download_youtube(url: str, workdir: Path) -> tuple[Path, str]:
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
+        "cookiefile": str(COOKIE_FILE) if COOKIE_FILE.is_file() else None,
         "restrictfilenames": True,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
@@ -96,6 +98,8 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def main():
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable is missing")
+
+    print(f"YouTube cookies: {'enabled' if COOKIE_FILE.is_file() else 'not configured'}")
     await start_web_server()
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_cmd))
