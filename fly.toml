@@ -1,3 +1,0 @@
-app = "youtube-telegram-bot"
-[env]
-PORT="10000"
